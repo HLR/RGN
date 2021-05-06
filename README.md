@@ -4,8 +4,8 @@ The source code of IJCAI 2021 paper
 
 ## requirement
 
-pip install tensorboardX
-pip install jsonlines
+>- pip install tensorboardX
+>- pip install jsonlines
 
 ## download the parameters
 link:
