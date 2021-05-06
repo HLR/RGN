@@ -143,8 +143,8 @@ def multi_qa_convert_examples_to_features(examples, tokenizer,
             add_special_tokens=True,
             max_length=max_length
         )
-        # input_ids, token_type_ids = inputs["input_ids"], inputs["token_type_ids"]
-        input_ids, token_type_ids = inputs["input_ids"], inputs["attention_mask"]
+        input_ids, token_type_ids = inputs["input_ids"], inputs["token_type_ids"]
+        # input_ids, token_type_ids = inputs["input_ids"], inputs["attention_mask"]
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
