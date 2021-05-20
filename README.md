@@ -1,8 +1,12 @@
 # RGN
 The source code of IJCAI 2021 paper: Relational Gating for ``What If'' Reasoning
 
-<p align="center"><img width="95%" src="images/rgn_framework.pdf" /></p>
+<p align="center"><img width="95%" src="images/rgn_framework.jpg" /></p>
 
+
+## The examples of WQIA 
+
+<p align="center"><img width="95%" src="images/wiqa_example.jpg" /></p>
 
 ## Download the parameters to the RGN_model folder
 link:
