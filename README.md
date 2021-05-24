@@ -1,4 +1,4 @@
-# RGN
+# RGN (IJCAI 2021)
 The source code of IJCAI 2021 paper: Relational Gating for ``What If'' Reasoning
 
 <p align="center"><img width="95%" src="images/rgn_framework.jpg" /></p>
@@ -14,6 +14,9 @@ https://drive.google.com/file/d/1xT_h5Fe2Uf0KXOgGGZce558RV6Emy9eO/view?usp=shari
 
 
 ## Conda environment
+
+To run our code, we suggest people to install the 
+
 >- conda env create -f rgn.yaml
 >- source activate rgn
 
