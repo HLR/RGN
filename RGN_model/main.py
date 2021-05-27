@@ -18,20 +18,18 @@ from tqdm import tqdm, trange
 
 from transformers import (WEIGHTS_NAME, RobertaConfig,
                           RobertaTokenizer, RobertaForSequenceClassification)
-from modeling import RobertaForSequenceClassificationConsistency
+from modeling import RGN
 # from transformers import AdamW, WarmupLinearSchedule
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 from wiqa_preprocess import multi_qa_output_modes as output_modes
 from wiqa_preprocess import multi_qa_processors as processors
-# from wiqa_preprocess import multi_qa_convert_examples_to_features, multi_qa_triplet_convert_examples_to_features, multi_qa_triplet_convert_examples_to_features_augmented_data
-from wiqa_preprocess import multi_qa_convert_examples_to_features, multi_qa_triplet_convert_examples_to_features_augmented_data
+from wiqa_preprocess import multi_qa_convert_examples_to_features
 
 logger = logging.getLogger(__name__)
 
 MODEL_CLASSES = {
-    'roberta_cons':  (RobertaConfig, RobertaForSequenceClassificationConsistency, RobertaTokenizer),
-    'roberta': (RobertaConfig, RobertaForSequenceClassification, RobertaTokenizer),
+    'roberta':  (RobertaConfig, RGN, RobertaTokenizer),
 }
 
 
@@ -126,35 +124,14 @@ def train(args, train_dataset, model, tokenizer):
             model.train()
             # load the paired examples
             batch = tuple(t.to(args.device) for t in batch)
-            if args.use_consistency is True:
-                inputs = {'input_ids': batch[0],
-                          'attention_mask': batch[1],
-                          'token_type_ids': None,
-                          # add consistent pairs / triples'
-                          'aug_one_input_ids': batch[3],
-                          'aug_one_attention_mask': batch[4],
-                          'aug_one_token_type_ids': None,
-                          'aug_two_input_ids': batch[6],
-                          'aug_two_attention_mask': batch[7],
-                          'aug_two_token_type_ids': None,
-                          'labels': batch[9],
-                          'labels_one_hot': batch[10],
-                          'aug_labels_one_hot': batch[11],
-                          'paired':         batch[12],
-                          'triplet': batch[13]
-                          }
-            else:
-                inputs = {'input_ids':      batch[0],
-                          'attention_mask': batch[1],
-                          'token_type_ids': None,
-                          'labels':         batch[3]}
+            inputs = {'input_ids':      batch[0],
+                        'attention_mask': batch[1],
+                        'token_type_ids': None,
+                        'labels':         batch[3]}
             outputs = model(**inputs)
             # print(model)
             # outputs = model(input_ids=batch[0],attention_mask=batch[1], token_type_ids=None, labels=batch[3])
-            if args.use_consistency is True:
-                loss, tmp_train_trans_loss, tmp_train_sym_loss = outputs[0], outputs[1], outputs[2]
-            else:
-                loss = outputs[0]
+            loss = outputs[0]
             if args.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
             if args.gradient_accumulation_steps > 1:
@@ -259,11 +236,7 @@ def evaluate(args, model, tokenizer, prefix=""):
                           'token_type_ids': None,
                           'labels': batch[3]}
                 outputs = model(**inputs)
-                if args.use_consistency is True:
-                    tmp_eval_loss, tmp_eval_cons_loss, tmp_eval_class_loss, logits = outputs[
-                        0], outputs[1], outputs[2], outputs[3]
-                else:
-                    tmp_eval_loss, logits = outputs[:2]
+                tmp_eval_loss, logits = outputs[:2]
                 eval_loss += tmp_eval_loss.mean().item()
             nb_eval_steps += 1
             if preds is None:
@@ -389,144 +362,6 @@ def load_and_cache_examples(args, task, tokenizer,
     return dataset
 
 
-def load_and_cache_examples_triplet(args, task, tokenizer,
-                                    evaluate=False, test=False,
-                                    return_example_id=False,
-                                    random_sample=False,
-                                    return_features=False):
-    if args.local_rank not in [-1, 0] and not evaluate:
-        # Make sure only the first process in distributed training process the
-        # dataset, and the others will use the cache
-        torch.distributed.barrier()
-
-    processor = processors[task]()
-    output_mode = output_modes[task]
-    # Load data features from cache or dataset file
-    if evaluate is True and test is False:
-        cached_features_file = os.path.join(args.data_dir, 'cached_consistency_{}_{}_{}_{}_{}'.format(
-            'dev',
-            list(filter(None, args.model_name_or_path.split('/'))).pop(),
-            str(args.max_seq_length),
-            str(task),
-            random_sample))
-    elif evaluate is False and test is True:
-        cached_features_file = os.path.join(args.data_dir, 'cached_consistency_{}_{}_{}_{}_{}'.format(
-            'test',
-            list(filter(None, args.model_name_or_path.split('/'))).pop(),
-            str(args.max_seq_length),
-            str(task),
-            random_sample))
-    elif evaluate is False and test is False:
-        cached_features_file = os.path.join(args.data_dir, 'cached_consistency_{}_{}_{}_{}_{}_{}'.format(
-            'train',
-            list(filter(None, args.model_name_or_path.split('/'))).pop(),
-            str(args.max_seq_length),
-            str(task), random_sample, args.random_ratio))
-    else:
-        raise NotImplementedError(
-            "the mode should be either of train, dev or test.")
-
-    if os.path.exists(cached_features_file):
-        logger.info("Loading features from cached file %s",
-                    cached_features_file)
-        features = torch.load(cached_features_file)
-    else:
-        logger.info("Creating features from dataset file at %s", args.data_dir)
-        label_list = processor.get_labels()
-        if task in ['mnli', 'mnli-mm'] and args.model_type in ['roberta']:
-            # HACK(label indices are swapped in RoBERTa pretrained model)
-            label_list[1], label_list[2] = label_list[2], label_list[1]
-        if evaluate is True and test is False:
-            examples = processor.get_dev_examples(args.data_dir)
-        elif evaluate is False and test is True:
-            examples = processor.get_test_examples(args.data_dir)
-        elif evaluate is False and test is False:
-            examples = processor.get_train_examples(args.data_dir)
-        else:
-            raise NotImplementedError()
-
-        # random sample during train only
-        if evaluate is False and test is False:
-            examples = random.sample(examples, int(
-                len(examples) * args.random_ratio))
-
-        features = multi_qa_triplet_convert_examples_to_features_augmented_data(examples,
-                                                                                tokenizer,
-                                                                                label_list=label_list,
-                                                                                max_length=args.max_seq_length,
-                                                                                output_mode=output_mode,
-                                                                                pad_on_left=False,
-                                                                                pad_token=tokenizer.convert_tokens_to_ids(
-                                                                                    [tokenizer.pad_token])[0],
-                                                                                pad_token_segment_id=0,
-                                                                                random_sample=random_sample,
-                                                                                no_augmentation=args.no_augmentation)
-
-        if args.local_rank in [-1, 0]:
-            logger.info("Saving features into cached file %s",
-                        cached_features_file)
-            torch.save(features, cached_features_file)
-
-    if args.local_rank == 0 and (not evaluate or not test):
-        # Make sure only the first process in distributed training process the
-        # dataset, and the others will use the cache
-        torch.distributed.barrier()
-
-    # Convert to Tensors and build dataset
-    all_input_ids = torch.tensor(
-        [f.input_ids for f in features], dtype=torch.long)
-    all_attention_mask = torch.tensor(
-        [f.attention_mask for f in features], dtype=torch.long)
-    all_token_type_ids = torch.tensor(
-        [f.token_type_ids for f in features], dtype=torch.long)
-    aug_one_all_token_type_ids = torch.tensor(
-        [f.aug_one_input_ids for f in features], dtype=torch.long)
-    aug_one_all_token_type_ids = torch.tensor(
-        [f.aug_one_attention_mask for f in features], dtype=torch.long)
-    aug_one_all_token_type_ids = torch.tensor(
-        [f.aug_one_token_type_ids for f in features], dtype=torch.long)
-    aug_two_all_input_ids = torch.tensor(
-        [f.aug_two_input_ids for f in features], dtype=torch.long)
-    aug_two_all_attention_mask = torch.tensor(
-        [f.aug_two_attention_mask for f in features], dtype=torch.long)
-    aug_two_all_token_type_ids = torch.tensor(
-        [f.aug_two_token_type_ids for f in features], dtype=torch.long)
-
-    all_labels_one_hots = torch.tensor(
-        [f.labels_one_hot for f in features], dtype=torch.float)
-    all_aug_labels_one_hots = torch.tensor(
-        [f.aug_labels_one_hot for f in features], dtype=torch.float)
-
-    all_paireds = torch.tensor(
-        [f.paired for f in features], dtype=torch.long)
-    all_triplets = torch.tensor(
-        [f.triplet for f in features], dtype=torch.long)
-
-    if output_mode == "classification":
-        all_labels = torch.tensor(
-            [f.label for f in features], dtype=torch.long)
-    elif output_mode == "regression":
-        all_labels = torch.tensor(
-            [f.label for f in features], dtype=torch.float)
-
-    dataset = TensorDataset(
-        all_input_ids, all_attention_mask, all_token_type_ids,
-        aug_one_all_token_type_ids, aug_one_all_token_type_ids, aug_one_all_token_type_ids,
-        aug_two_all_input_ids, aug_two_all_attention_mask, aug_two_all_token_type_ids,
-        all_labels, all_labels_one_hots, all_aug_labels_one_hots, all_paireds, all_triplets)
-
-    if return_example_id is True and return_features is False:
-        example_ids = [f.example_id for f in features]
-        return dataset, example_ids
-    elif return_example_id is True and return_features is True:
-        example_ids = [f.example_id for f in features]
-        return dataset, example_ids, features
-    elif return_example_id is False and return_features is True:
-        return dataset, features
-    else:
-        return dataset
-
-
 def main():
     parser = argparse.ArgumentParser()
 
@@ -583,12 +418,6 @@ def main():
                         help="If > 0: set total number of training steps to perform. Override num_train_epochs.")
     parser.add_argument("--warmup_steps", default=0, type=int,
                         help="Linear warmup over warmup_steps.")
-    parser.add_argument("--lambda_val", default=0.5, type=float,
-                        help="a weight term between two losses.")
-    parser.add_argument("--lambda_a", default=0.5, type=float,
-                        help="a weight term between two losses.")
-    parser.add_argument("--lambda_b", default=0.5, type=float,
-                        help="a weight term between two losses.")
     parser.add_argument('--logging_steps', type=int, default=50,
                         help="Log every X updates steps.")
     parser.add_argument('--save_steps', type=int, default=500,
@@ -621,11 +450,6 @@ def main():
 
     parser.add_argument('--random_sample', action='store_true',
                         help="randomly select augmented data")
-
-    parser.add_argument('--use_consistency', action='store_true',
-                        help="use Li et al. (2019) loss")
-    parser.add_argument('--no_augmentation', action='store_true',
-                        help="Set true if you do not use augmentation; otherwise you'll run over augmentation mode.")
     parser.add_argument("--random_ratio", default=1.0, type=float,
                         help="a random sampling ratio.")
 
@@ -691,8 +515,6 @@ def main():
     model = model_class.from_pretrained(args.model_name_or_path, from_tf=bool(
         '.ckpt' in args.model_name_or_path), config=config)
 
-    if args.use_consistency is True:
-        model.set_lambda(args.lambda_a, args.lambda_b)
 
     if args.local_rank == 0:
         # Make sure only the first process in distributed training will
@@ -705,20 +527,13 @@ def main():
 
     # Training
     if args.do_train:
-        if args.use_consistency is True:
-            train_dataset = load_and_cache_examples_triplet(
-                args, args.task_name, tokenizer, evaluate=False, random_sample=args.random_sample)
-        else:
-            train_dataset = load_and_cache_examples(
-                args, args.task_name, tokenizer, evaluate=False)
+        train_dataset = load_and_cache_examples(
+            args, args.task_name, tokenizer, evaluate=False)
         global_step, tr_loss = train(args, train_dataset, model, tokenizer)
         logger.info(" global_step = %s, average loss = %s",
                     global_step, tr_loss)
 
-    # Saving best-practices: if you use defaults names for the model, you can
-    # reload it using from_pretrained()
     if args.do_train and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
-        # Create output directory if needed
         if not os.path.exists(args.output_dir) and args.local_rank in [-1, 0]:
             os.makedirs(args.output_dir)
 
@@ -755,10 +570,7 @@ def main():
         for checkpoint in checkpoints:
             global_step = checkpoint.split(
                 '-')[-1] if len(checkpoints) > 1 else ""
-            # model = RobertaForSequenceClassification.from_pretrained(
-            #     checkpoint)
-            model = RobertaForSequenceClassificationConsistency.from_pretrained(
-                checkpoint)
+            model = RGN.from_pretrained(checkpoint)
             model.to(args.device)
 
             result = evaluate(args, model, tokenizer, prefix=global_step)

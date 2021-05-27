@@ -1,5 +1,5 @@
 python main.py \
-    --model_type roberta_cons \
+    --model_type roberta \
     --model_name_or_path ./saved_model/ \
     --task_name wiqa --do_test \
     --data_dir ./wiqa_data/ \
