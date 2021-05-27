@@ -6,5 +6,5 @@ python main.py \
     --max_seq_length 256 \
     --per_gpu_eval_batch_size=8 \
     --weight_decay 0.01 \
-    --output_dir ./saved_model \
+    --output_dir ./saved_model/ \
     --seed 789 
