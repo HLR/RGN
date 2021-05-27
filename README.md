@@ -40,3 +40,8 @@ Here we provide an example to train the model. More details are shown in the run
 
 >- cd RGN_model
 >- sh run_train.sh
+
+## Machine Environment and Training Time
+
+- Machine Environment: 2 TITAN RTX
+- Training time: 1 hr 30 mins
